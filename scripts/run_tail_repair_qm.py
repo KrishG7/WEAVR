@@ -269,6 +269,12 @@ def main() -> int:
     args.paired_out_csv = _paths["paired_out_csv"]
     guard_result_overwrites(_paths.values(), force=args.force)
 
+    # `to_csv` needs its parent to exist and will not create it, and
+    # `write_per_day_scores` only makes the `per_day/` subdirectory -- so a
+    # fresh --results-dir failed at the very last step after all the compute.
+    for _p in _paths.values():
+        Path(_p).parent.mkdir(parents=True, exist_ok=True)
+
     legacy_path = args.baseline_store if args.baseline_store is not None else args.store
     baseline_paths = resolve_store_paths(
         args.baseline_stores,
