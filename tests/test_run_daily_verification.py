@@ -21,10 +21,10 @@ class TestAlignToImdDay:
 
         aligned = _align_to_imd_day(da, lead_hours=24)
 
-        # valid_time = init + 24h; IMD day = (valid_time - 3h).normalize()
-        # -> 2020-06-01T00:00 + 24h = 2020-06-02T00:00, - 3h = 2020-06-01T21:00,
-        # normalized (floored to the date) -> 2020-06-01.
-        expected = pd.to_datetime(["2020-06-01", "2020-06-08"])
+        # init 2020-06-01T00:00 + 24h = valid 2020-06-02T00:00, whose 24 h
+        # window overlaps IMD day 2020-06-02 (06-01T03:00 -> 06-02T03:00,
+        # labelled by its end) for 21 of 24 hours.
+        expected = pd.to_datetime(["2020-06-02", "2020-06-09"])
         assert aligned.dims == ("sample",)
         np.testing.assert_array_equal(pd.DatetimeIndex(aligned["sample"].values), expected)
 
@@ -52,7 +52,8 @@ class TestRollingVerificationForLead:
         obs_values = fc_values * 1000.0 + rng.normal(scale=0.5, size=(10, 2, 2))
         obs_da = xr.DataArray(
             obs_values,
-            coords={"time": times, "latitude": lat, "longitude": lon},
+            # A 24 h forecast from day t verifies on IMD day t+1.
+            coords={"time": times + pd.Timedelta(days=1), "latitude": lat, "longitude": lon},
             dims=["time", "latitude", "longitude"],
         )
         obs_ds = xr.Dataset({"rain": obs_da})
@@ -105,7 +106,12 @@ class TestRollingVerificationForLead:
             {
                 "rain": xr.DataArray(
                     obs_values,
-                    coords={"time": times, "latitude": lat, "longitude": lon},
+                    # A 24 h forecast from day t verifies on IMD day t+1.
+                    coords={
+                        "time": times + pd.Timedelta(days=1),
+                        "latitude": lat,
+                        "longitude": lon,
+                    },
                     dims=["time", "latitude", "longitude"],
                 )
             }

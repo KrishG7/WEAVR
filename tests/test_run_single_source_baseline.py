@@ -27,18 +27,27 @@ def _synthetic_store(tmp_path: Path, n_init: int = 10, year: int = 2020) -> Path
     store = tmp_path / f"tiny_{year}.zarr"
     init_times = pd.date_range(f"{year}-06-01", periods=n_init, freq="D")
     leads = np.array([24, 48], dtype="int64")
+    lead_days = leads // 24
     rng = np.random.default_rng(0)
-    obs_values = rng.uniform(0.0, 20.0, size=(n_init, LAT.size, LON.size))
+    # Observations run past the last init by the longest lead, because a 24 h
+    # forecast from 00 UTC on day t verifies on IMD day t+1 (IMD labels a day
+    # by its 08:30 IST end, #106) and a 48 h one on t+2.
+    obs_days = pd.date_range(f"{year}-06-01", periods=n_init + int(lead_days.max()), freq="D")
+    obs_values = rng.uniform(0.0, 20.0, size=(obs_days.size, LAT.size, LON.size))
 
     obs = xr.Dataset(
         {"rain": (("time", "latitude", "longitude"), obs_values)},
-        coords={"time": init_times, "latitude": LAT, "longitude": LON},
+        coords={"time": obs_days, "latitude": LAT, "longitude": LON},
     )
     obs.to_zarr(store, group="imd_observed", mode="w", consolidated=True)
 
     offsets_mm = {"graphcast": 1.0, "ifs_ens_mean": 3.0, "hres": 6.0}
     for name, offset in offsets_mm.items():
-        values = np.stack([obs_values + offset] * leads.size, axis=1)
+        # Each forecast is the observation on the day it verifies on, plus a
+        # source-specific offset, so the offset is exactly its error.
+        values = np.stack(
+            [obs_values[days : days + n_init] + offset for days in lead_days], axis=1
+        )
         source = xr.Dataset(
             {
                 "total_precipitation_24hr": (

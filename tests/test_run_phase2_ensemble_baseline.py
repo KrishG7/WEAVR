@@ -18,10 +18,10 @@ from run_phase2_ensemble_baseline import (  # noqa: E402
 class TestValidTimeToImdDay:
     def test_maps_valid_time_to_the_imd_day_it_falls_within(self):
         # init 2020-06-01T00:00 UTC + 24h lead -> valid at 2020-06-02T00:00 UTC,
-        # inside the IMD day window 06-01T03:00 -> 06-02T03:00, so labelled
-        # 2020-06-01 -- same convention scripts/run_tier0_baseline.py uses.
+        # inside the IMD day window 06-01T03:00 -> 06-02T03:00, which IMD
+        # labels by its *end*: 2020-06-02 (#106).
         result = _valid_time_to_imd_day(np.datetime64("2020-06-01T00:00:00"), lead_hours=24)
-        assert pd.Timestamp(result) == pd.Timestamp("2020-06-01")
+        assert pd.Timestamp(result) == pd.Timestamp("2020-06-02")
 
     def test_longer_lead_can_cross_into_the_next_calendar_day(self):
         result_24h = _valid_time_to_imd_day(np.datetime64("2020-06-01T00:00:00"), lead_hours=24)

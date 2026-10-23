@@ -96,12 +96,16 @@ notes: list[str] = []
 def expected_rows(lead_hours: int) -> int:
     """Per-day rows across both folds at this lead.
 
-    A longer lead pushes the last init times' valid times past the end of the
-    observed window, so each extra lead day costs one day per season. Verified
-    against the tier0/tier1/single-source/phase2 runs: 244/242/240/238/236.
+    A 00 UTC init plus `lead_days` verifies on the IMD day `lead_days` later
+    (IMD labels a day by its end, #106), so the last `lead_days` inits of each
+    season verify past 30 September and have no observation: 242/240/238/236/234.
+
+    Under the old one-day-early pairing this was `SEASON_DAYS - (lead_days - 1)`
+    (244/242/240/238/236) -- the same count shape, one day longer, which is
+    why the row count could never have caught that error.
     """
     lead_days = lead_hours // 24
-    return 2 * (SEASON_DAYS - (lead_days - 1))
+    return 2 * (SEASON_DAYS - lead_days)
 
 
 def check_domain_csv(name: str) -> pd.DataFrame | None:

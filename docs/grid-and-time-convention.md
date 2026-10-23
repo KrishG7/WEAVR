@@ -27,19 +27,44 @@ differences behind interpolation artifacts. If a genuinely coarser source
 needs to be included later, it should go through an explicit, documented
 area-weighted remap (e.g. `xesmf`), not silently through this function.
 
-## Daily accumulation window: IMD's 03 UTC → 03 UTC (next day)
+## Daily accumulation window: IMD's 08:30 IST → 08:30 IST, labelled by its end
 
-This is IMD's own observation-day convention (03:00 UTC = 08:30 IST), not
-UTC midnight-to-midnight. A day labelled `2024-06-15` covers
-`2024-06-15T03:00 UTC` through `2024-06-16T03:00 UTC`. Every other source
-(WeatherBench 2, ECMWF open data) must be resampled onto this window, not
-the other way around — IMD is the ground truth we verify against
-(§3.2/§3.6 of the research brief), so its convention is the one that must
-not silently drift.
+This is IMD's own observation-day convention (08:30 IST = 03:00 UTC), not
+UTC midnight-to-midnight, and IMD labels the window by the date it **ends**
+on. IMD's rainfall-information page tags the rainfall "recorded from 0830 hrs
+of 21-10-2026 to 0830 hrs of 22-10-2026" as the value for **22-10-2026**
+(https://mausam.imd.gov.in/responsive/rainfallinformation_msd.php). So a day
+labelled `2024-06-15` covers `2024-06-14T03:00 UTC` through
+`2024-06-15T03:00 UTC`. Every other source (WeatherBench 2, ECMWF open data)
+must be aligned onto this window, not the other way around — IMD is the
+ground truth we verify against (§3.2/§3.6 of the research brief), so its
+convention is the one that must not silently drift.
 
-`resample_to_imd_day()` sums (not averages) over each 24h window, and
-labels the resulting day by the date the window *starts* on — matching how
-IMD itself labels a day by its 03 UTC start, not by midnight UTC.
+**Correction (#106).** This section used to say the window is labelled by the
+date it *starts* on. That was wrong, and every forecast in the project was
+paired with the IMD day before the one it covers -- a 3-hour overlap instead of
+21. Nothing structural caught it: both labellings give one IMD day per
+forecast. The data did: every source's day-to-day correlation with IMD peaked
+one day after that pairing, at every lead, in both seasons, and re-pairing cut
+raw GraphCast's 24 h RMSE by ~10%.
+
+The rule lives in one place, `weavr.grid`, and every runner goes through it:
+
+- `imd_day_of_accumulation(valid_time)` -- the IMD day a 24 h accumulation
+  ending at `valid_time` is scored against: the one whose window overlaps it
+  most. A 00 UTC valid time maps to the IMD day ending three hours later.
+- `align_forecast_to_imd_day(da, lead_hours)` -- the same, for a forecast
+  array indexed by init time; this is the pairing every runner uses.
+- `imd_day_of_instant(t)` -- the IMD day an instantaneous observation falls
+  in (`(D-1 03 UTC, D 03 UTC]`), used for 6-hourly depression positions.
+- `resample_to_imd_day(ds)` -- sums a sub-daily series into IMD days.
+
+`scripts/preflight_stores.py` checks the pairing on the real stores before any
+long run: each source's correlation with IMD must peak at offset 0. That is the
+check that would have caught #106 on day one.
+
+`resample_to_imd_day()` sums (not averages) over each 24h window, and labels
+the resulting day by the date the window *ends* on, as IMD does.
 
 **Implementation note**: `xarray.Dataset.resample(freq="1D", offset=...)`
 does *not* actually shift calendar-day bin boundaries in the xarray/pandas

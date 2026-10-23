@@ -5,7 +5,7 @@ Tracks SIH PS 26081. See the research brief for citations behind each decision.
 ## Phase 0 — Data access & scoping
 Confirm NCMRWF/organiser access to NCUM/NEPS-G archives and the HEPPI dataset.
 Stand up access to WeatherBench 2, ECMWF open data, IMD gridded rainfall.
-Lock grid (0.25°) and IMD's 03–03 UTC daily accumulation window.
+Lock grid (0.25°) and IMD's 03–03 UTC daily accumulation window (labelled by its end date; corrected in #106).
 **Exit criterion**: one full monsoon season of aligned forecasts + IMD obs in one store.
 
 ## Phase 1 — Baseline pipeline + verification harness

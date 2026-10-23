@@ -260,7 +260,8 @@ def build_imd_group(
     ds = ds.rename({"lat": "latitude", "lon": "longitude"})
     ds = _clear_encoding(ds)
 
-    # IMD's own product is already daily on IMD's own 03-03 UTC convention
+    # IMD's own product is already daily on IMD's own 03-03 UTC convention,
+    # labelled by the date each window ends on (see weavr.grid)
     # (imdlib serves pre-aggregated daily values, not sub-daily) -- there is
     # no further resampling to do here. weavr.grid.resample_to_imd_day exists
     # for sources that arrive sub-daily or on a different day boundary; IMD

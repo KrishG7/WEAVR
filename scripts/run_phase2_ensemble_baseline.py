@@ -68,7 +68,7 @@ from run_tier0_baseline import PRECIP_M_TO_MM  # noqa: E402
 
 from weavr import verify as V  # noqa: E402
 from weavr.ensemble import NoLaggedMembersError, build_lagged_ensemble  # noqa: E402
-from weavr.grid import IMD_DAY_START_HOUR_UTC  # noqa: E402
+from weavr.grid import imd_day_of_accumulation  # noqa: E402
 from weavr.score_io import (  # noqa: E402
     FORCE_HELP,
     PerDayScoreWriter,
@@ -152,15 +152,13 @@ def _reconstruct_raw_source(dense: xr.Dataset, var: str) -> xr.Dataset:
 
 
 def _valid_time_to_imd_day(nominal_time: np.datetime64, lead_hours: int) -> np.datetime64:
-    """Map one nominal (init_time, lead) forecast's valid time to the IMD day
-    it falls within -- the same `(valid_time - 3h).normalize()` rule
-    scripts/run_tier0_baseline.py's `_align_to_imd_day` applies, for a single
-    forecast rather than a whole array (each ensemble here is already built
-    per nominal forecast, one at a time).
+    """Map one nominal (init_time, lead) forecast's valid time to its IMD day.
+
+    `weavr.grid.imd_day_of_accumulation` for a single forecast rather than a
+    whole array (each ensemble here is built per nominal forecast).
     """
     valid_time = pd.Timestamp(nominal_time) + pd.Timedelta(hours=lead_hours)
-    imd_day = (valid_time - pd.Timedelta(hours=IMD_DAY_START_HOUR_UTC)).normalize()
-    return imd_day.to_datetime64()
+    return imd_day_of_accumulation(valid_time)[0].to_datetime64()
 
 
 def _exceedance_probability(ensemble: xr.DataArray, threshold: float) -> xr.DataArray:

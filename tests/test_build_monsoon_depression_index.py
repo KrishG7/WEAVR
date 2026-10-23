@@ -14,12 +14,13 @@ from build_monsoon_depression_index import (  # noqa: E402
 
 def _synthetic_catalogue() -> pd.DataFrame:
     rows = [
-        # In-domain, in-season, category 1 ("low") -- must NOT count. Time
-        # chosen at 12:00 UTC so the IMD-day offset (-3h) doesn't shift it
-        # onto a different calendar day than the one asserted below.
+        # In-domain, in-season, category 1 ("low") -- must NOT count. 12:00 UTC
+        # on 06-05 is inside the window 06-05T03:00 -> 06-06T03:00, which is
+        # IMD day 06-06 (IMD labels a day by its end).
         {"time": pd.Timestamp("2020-06-05 12:00"), "year": 2020, "month": 6, "day": 5,
          "lat": 15.0, "lon": 75.0, "imd_category": 1, "imd_label": "low"},
-        # In-domain, in-season, category 2 ("depression") -- must count.
+        # In-domain, in-season, category 2 ("depression") -- must count. Like the
+        # 12:00 row below, it falls in IMD day 07-11.
         {"time": pd.Timestamp("2020-07-10 06:00"), "year": 2020, "month": 7, "day": 10,
          "lat": 20.0, "lon": 80.0, "imd_category": 2, "imd_label": "depression"},
         # Same real day, later hour, stronger category -- max should win.
@@ -60,15 +61,18 @@ class TestBuildDailyPresence:
 
         result = build_daily_presence(positions, year=2020)
 
-        assert not bool(result["depression_present"].sel(time="2020-06-05").item())
+        assert not bool(result["depression_present"].sel(time="2020-06-06").item())
 
     def test_depression_or_stronger_marks_the_real_day_present(self):
         positions = _synthetic_catalogue().iloc[[1, 2]]  # the two 2020-07-10 rows
 
         result = build_daily_presence(positions, year=2020)
 
-        assert bool(result["depression_present"].sel(time="2020-07-10").item())
-        assert result["max_imd_category"].sel(time="2020-07-10").item() == 3
+        # 06:00 and 12:00 UTC on 07-10 are both after that day's 03 UTC
+        # boundary, so they belong to IMD day 07-11, and 07-10 has nothing.
+        assert bool(result["depression_present"].sel(time="2020-07-11").item())
+        assert result["max_imd_category"].sel(time="2020-07-11").item() == 3
+        assert not bool(result["depression_present"].sel(time="2020-07-10").item())
 
     def test_every_jjas_day_is_present_even_with_zero_real_rows(self):
         positions = _synthetic_catalogue().iloc[0:0]  # empty

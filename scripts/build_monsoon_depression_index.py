@@ -21,9 +21,10 @@ at least one real hourly position that day has `imd_category >= 2`
 far more common stage) does not count.
 
 A day is labelled using the same IMD day convention every other daily
-series in this project uses (03:00 UTC to the next day's 03:00 UTC,
-weavr.grid.IMD_DAY_START_HOUR_UTC) -- not a UTC midnight-to-midnight day,
-so this covariate's own day boundaries line up with imd_observed's.
+series in this project uses (03:00 UTC to the next day's 03:00 UTC, labelled
+by the date it ends on: `weavr.grid.imd_day_of_instant`) -- not a UTC
+midnight-to-midnight day, so this covariate's own day boundaries line up with
+imd_observed's.
 
 Usage:
     python scripts/build_monsoon_depression_index.py [--out PATH]
@@ -46,7 +47,7 @@ from weavr.grid import (
     GRID_LAT_MIN,
     GRID_LON_MAX,
     GRID_LON_MIN,
-    IMD_DAY_START_HOUR_UTC,
+    imd_day_of_instant,
 )
 
 ZENODO_RECORD_ID = "22142640"
@@ -117,8 +118,7 @@ def build_daily_presence(positions: pd.DataFrame, year: int) -> xr.Dataset:
         imd_day = pd.Series([], dtype="datetime64[ns]")
         category = pd.Series([], dtype="int64")
     else:
-        offset = pd.Timedelta(hours=IMD_DAY_START_HOUR_UTC)
-        imd_day = (positions["time"] - offset).dt.normalize()
+        imd_day = pd.Series(imd_day_of_instant(positions["time"]), index=positions.index)
         category = positions["imd_category"]
 
     daily = pd.DataFrame({"imd_day": imd_day, "category": category})

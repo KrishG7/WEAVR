@@ -1,12 +1,15 @@
 """The one common grid and time convention every data source gets aligned to.
 
 Locked decision (see docs/grid-and-time-convention.md for the full
-rationale): 0.25 degree lat/lon over India, and IMD's 03 UTC -> 03 UTC
-(next day) 24-hour accumulation window — not UTC midnight-to-midnight.
+rationale): 0.25 degree lat/lon over India, and IMD's 08:30 IST -> 08:30 IST
+24-hour accumulation window (03 UTC -> 03 UTC), **labelled by the date it
+ends on** -- not UTC midnight-to-midnight, and not the date it starts on.
 
-Every ingestion script must call `regrid_to_common` / `resample_to_imd_day`
-rather than reimplementing regridding or resampling inline, so alignment
-bugs can't silently diverge between sources.
+Every script that turns a time into an IMD day must go through
+`imd_day_of_accumulation`, `imd_day_of_instant`, `align_forecast_to_imd_day`
+or `resample_to_imd_day` rather than reimplementing the rule inline. Five
+copies of it once agreed with each other and were all wrong by a day (#106),
+which is the failure this single definition exists to prevent.
 """
 
 from __future__ import annotations
@@ -89,19 +92,68 @@ def regrid_to_common(
 
 # --- IMD day convention ------------------------------------------------------
 
-# IMD's daily accumulation window: 03:00 UTC to 03:00 UTC the next day (this
-# is 08:30 IST to 08:30 IST, IMD's own observation-day convention), not UTC
-# midnight-to-midnight. A day labelled "2024-06-15" in IMD data covers
-# 2024-06-15 03:00 UTC through 2024-06-16 03:00 UTC.
-IMD_DAY_START_HOUR_UTC = 3
+# IMD's daily accumulation window is 08:30 IST to 08:30 IST (03:00 UTC to
+# 03:00 UTC), and IMD labels it by the date it *ends* on: the rainfall
+# "recorded from 0830 hrs of 21-10-2026 to 0830 hrs of 22-10-2026" is the
+# value for 22-10-2026 (IMD's rainfall-information page). So a day labelled
+# "2024-06-15" covers 2024-06-14 03:00 UTC through 2024-06-15 03:00 UTC.
+#
+# This used to say the opposite -- labelled by the start date -- and every
+# forecast in the project was scored against the IMD day before the one it
+# covered, overlapping it by 3 of 24 hours (#106). The day-to-day correlation
+# of every source against IMD peaks one day later than that pairing, at every
+# lead, in both seasons.
+IMD_DAY_END_HOUR_UTC = 3
+
+_IMD_DAY_END = pd.Timedelta(hours=IMD_DAY_END_HOUR_UTC)
+_HALF_DAY = pd.Timedelta(hours=12)
+_ONE_DAY = pd.Timedelta(days=1)
+
+
+def imd_day_of_accumulation(valid_time) -> pd.DatetimeIndex:
+    """The IMD day a 24 h accumulation *ending* at `valid_time` is scored against.
+
+    A forecast accumulation ending at `valid_time` covers
+    `(valid_time - 24h, valid_time]`. The IMD day it belongs to is the one
+    whose window overlaps it most, i.e. the IMD day ending nearest to
+    `valid_time`: round `valid_time - 03 UTC` to the nearest calendar day.
+    For the usual 00 UTC valid time that is the IMD day ending three hours
+    later (a 21 h overlap); for 12 UTC it is the one ending nine hours earlier
+    (15 h). Accepts a scalar or an array of datetimes.
+    """
+    shifted = pd.DatetimeIndex(np.atleast_1d(np.asarray(valid_time, dtype="datetime64[ns]")))
+    return (shifted - _IMD_DAY_END + _HALF_DAY).floor("D")
+
+
+def imd_day_of_instant(times) -> pd.DatetimeIndex:
+    """The IMD day an instantaneous observation at `times` falls inside.
+
+    IMD day `D` is the half-open window `(D-1 03 UTC, D 03 UTC]`, so an
+    instant belongs to the day whose window *end* is the first 03 UTC at or
+    after it: `ceil(t - 03 UTC)` to a calendar day. 00 UTC on 15 June is in
+    IMD day 15 June; 06 UTC on 15 June is already in IMD day 16 June.
+    """
+    shifted = pd.DatetimeIndex(np.atleast_1d(np.asarray(times, dtype="datetime64[ns]")))
+    return (shifted - _IMD_DAY_END).ceil("D")
+
+
+def align_forecast_to_imd_day(da: xr.DataArray, lead_hours: int) -> xr.DataArray:
+    """Reindex a forecast from its init time onto the IMD day its lead verifies on.
+
+    `da` has a `time` coordinate of initialisation times and holds the
+    accumulation ending at `init + lead_hours`. The result is indexed by a
+    `sample` coordinate of IMD days, ready to join against `imd_observed`.
+    """
+    valid_time = pd.DatetimeIndex(da["time"].values) + pd.Timedelta(hours=lead_hours)
+    return da.assign_coords(time=imd_day_of_accumulation(valid_time)).rename(time="sample")
 
 
 def resample_to_imd_day(ds: xr.Dataset, time_dim: str = "time") -> xr.Dataset:
     """Resample/accumulate a sub-daily or differently-aligned dataset onto IMD's day.
 
-    Sums over each 24h window from 03:00 UTC to the next 03:00 UTC, and
-    labels the resulting day with the date the window *starts* on (matching
-    IMD's own convention of labelling a day by its 03 UTC start).
+    Sums each sub-daily *period-start* stamp into the 24 h window from 03:00
+    UTC to the next 03:00 UTC that contains it, and labels the result with the
+    date the window *ends* on -- IMD's own labelling.
 
     Implementation note: `Dataset.resample(..., offset=...)` does not shift
     calendar-day ("1D") bin boundaries in the xarray/pandas versions this was
@@ -113,13 +165,10 @@ def resample_to_imd_day(ds: xr.Dataset, time_dim: str = "time") -> xr.Dataset:
     if time_dim not in ds.dims:
         raise ValueError(f"Dataset missing expected time dimension: {time_dim!r}")
 
-    offset = pd.Timedelta(hours=IMD_DAY_START_HOUR_UTC)
-    shifted = ds.assign_coords({time_dim: ds[time_dim] - offset})
+    shifted = ds.assign_coords({time_dim: ds[time_dim] - _IMD_DAY_END})
     resampled = shifted.resample({time_dim: "1D"}).sum(skipna=True)
 
-    # Bin labels are now midnight in shifted-time, i.e. exactly 03:00 UTC in
-    # real time for the window's start; normalise to a plain date label
-    # (matching IMD's own day-by-start-date convention) rather than exposing
-    # the shifted timestamp.
-    new_labels = pd.DatetimeIndex(resampled[time_dim].values).normalize()
+    # Bin labels are now midnight in shifted time, i.e. 03:00 UTC in real time
+    # at the window's *start*. IMD labels a day by its end, one day later.
+    new_labels = pd.DatetimeIndex(resampled[time_dim].values).normalize() + _ONE_DAY
     return resampled.assign_coords({time_dim: new_labels})
