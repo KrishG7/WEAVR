@@ -300,20 +300,6 @@ def test_tier2_by_bin_csv_carries_pooled_and_fold_rows(tier2_out):
 # ---------------------------------------------------------------------------
 
 
-def _preflight(stores_root: Path) -> subprocess.CompletedProcess:
-    """Run the pre-flight store check the chain gates on."""
-    env = dict(os.environ)
-    env["PYTHONPATH"] = str(REPO / "src")
-    return subprocess.run(
-        [str(PYTHON), "/tmp/step07_gate/preflight_stores.py"],
-        cwd=REPO,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
-
-
 def test_all_zero_ifs_ens_store_is_caught_before_a_long_run(tmp_path):
     """The 2020 failure, reproduced deliberately.
 
@@ -457,11 +443,14 @@ def _write_valid_results(root: Path, season_days: int) -> None:
     for lead in (24, 48, 72, 96, 120):
         rows = []
         for year in (2018, 2020):
-            n = season_days - (lead // 24 - 1)
+            # A 24 h forecast from 1 June verifies on IMD day 2 June, so the
+            # first scored day moves with the lead and the last inits fall off.
+            n = season_days - lead // 24
+            first = pd.Timestamp(f"{year}-06-01") + pd.Timedelta(days=lead // 24)
             rows.append(
                 pd.DataFrame(
                     {
-                        "date": pd.date_range(f"{year}-06-01", periods=n).date,
+                        "date": pd.date_range(first, periods=n).date,
                         "fold": [str(year)] * n,
                         "crps_mm": [4.2] * n,
                     }
@@ -725,11 +714,11 @@ def test_result_gate_rejects_a_missing_ifs_ens_per_day_family(tmp_path):
 
 
 def test_expected_row_count_formula_matches_two_season_daily_cadence():
-    """`122 - (lead_days - 1)` per season, verified against real outputs.
+    """`122 - lead_days` per season under IMD's end-date day labelling (#106).
 
-    The 244/242/240/238/236 sequence was read off the 40 known-good per-day
-    files the fast tiers produced against the real 122-day stores, so pinning
-    it here means a change to the cadence assumption has to be deliberate.
+    The old one-day-early pairing gave 244/242/240/238/236 on the real
+    122-day stores. Pinning the sequence means a change to the pairing
+    assumption has to be deliberate -- as this one was.
     """
     sys.path.insert(0, str(REPO / "scripts"))
     import gate_step07_results as gate
@@ -738,11 +727,11 @@ def test_expected_row_count_formula_matches_two_season_daily_cadence():
     try:
         gate.SEASON_DAYS = 122
         assert [gate.expected_rows(lead) for lead in (24, 48, 72, 96, 120)] == [
-            244,
             242,
             240,
             238,
             236,
+            234,
         ]
     finally:
         gate.SEASON_DAYS = original

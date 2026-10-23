@@ -20,7 +20,12 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import xarray as xr
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
+from weavr.grid import align_forecast_to_imd_day  # noqa: E402
 
 DATA = Path(os.environ.get("WEAVR_DATA_DIR", "data")).resolve()
 
@@ -81,6 +86,59 @@ EXPECTED_TIMES = {"2018": 122, "2020": 122}
 
 #: Variable names that carry the metres/millimetres unit contract.
 PRECIP_VARS = {"total_precipitation_24hr"}
+
+#: The forecast-observation day pairing is checked on the data, not assumed.
+#: Every source's day-to-day correlation with IMD must peak at the pairing the
+#: runners use (offset 0), ahead of one day either side by at least this much.
+#: Measured on the real stores with the corrected pairing the margin is ~0.1 at
+#: 24 h; with the old one-day-early pairing offset +1 led by 0.11-0.15 (#106).
+ALIGNMENT_SOURCES = ("graphcast", "ifs_ens_mean")
+ALIGNMENT_LEAD_HOURS = 24
+MIN_ALIGNMENT_MARGIN = 0.02
+
+
+def pairing_offset_correlations(
+    forecast: xr.DataArray, obs: xr.DataArray, lead_hours: int
+) -> dict[int, float]:
+    """Day-to-day correlation of a forecast with IMD at offsets -1, 0, +1 days.
+
+    `forecast` is indexed by init `time`, `obs` by IMD day `time`. The forecast
+    is paired through `weavr.grid.align_forecast_to_imd_day` -- the pairing
+    every runner uses -- and then shifted by each offset. Each cell's own mean
+    is removed first, so the number measures day-to-day skill rather than
+    climatology, which is what a one-day label error destroys.
+    """
+    aligned = align_forecast_to_imd_day(forecast, lead_hours)
+    days = pd.DatetimeIndex(aligned["sample"].values)
+    obs_days = pd.DatetimeIndex(obs["time"].values)
+    f_all = aligned.values.reshape(days.size, -1)
+    o_all = obs.values.reshape(obs_days.size, -1)
+    cells = np.isfinite(o_all).all(axis=0) & np.isfinite(f_all).all(axis=0)
+    out: dict[int, float] = {}
+    for offset in (-1, 0, 1):
+        idx = obs_days.get_indexer(days + pd.Timedelta(days=offset))
+        ok = idx >= 0
+        f = f_all[ok][:, cells]
+        o = o_all[idx[ok]][:, cells]
+        f = f - f.mean(axis=0)
+        o = o - o.mean(axis=0)
+        denom = np.sqrt((f * f).sum() * (o * o).sum())
+        out[offset] = float((f * o).sum() / denom) if denom > 0 else float("nan")
+    return out
+
+
+def alignment_problem(label: str, corr: dict[int, float]) -> str | None:
+    """A failure message if offset 0 is not the clear correlation peak, else None."""
+    rival = max(corr[-1], corr[1])
+    if np.isfinite(corr[0]) and corr[0] >= rival + MIN_ALIGNMENT_MARGIN:
+        return None
+    best = max(corr, key=lambda k: corr[k] if np.isfinite(corr[k]) else -np.inf)
+    return (
+        f"{label}: forecast-observation correlation peaks at offset {best:+d} day(s), "
+        f"not at the pairing the runners use "
+        f"(r[-1]={corr[-1]:.3f}, r[0]={corr[0]:.3f}, r[+1]={corr[1]:.3f}). "
+        "Every score would be computed against the wrong IMD day (see #106)."
+    )
 
 
 def main() -> int:
@@ -193,12 +251,48 @@ def main() -> int:
                     "a short store silently truncates the fold"
                 )
 
+    # The day pairing, on the data. Every other check here can pass while each
+    # forecast is scored against the wrong IMD day; this is the one that would
+    # have caught #106 before any result was computed.
+    for year in EXPECTED_TIMES:
+        store = DATA / f"baseline_{year}_jjas_daily.zarr"
+        if not store.exists():
+            continue  # already reported as MISSING above
+        try:
+            obs = xr.open_zarr(store, group="imd_observed")["rain"].load()
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"{store.name}: cannot read imd_observed -- {exc}")
+            continue
+        for source in ALIGNMENT_SOURCES:
+            label = f"{store.name}/{source} @ {ALIGNMENT_LEAD_HOURS}h"
+            try:
+                fc = (
+                    xr.open_zarr(store, group=source)["total_precipitation_24hr"]
+                    .sel(prediction_timedelta=ALIGNMENT_LEAD_HOURS)
+                    .load()
+                )
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"{label}: cannot read -- {type(exc).__name__}: {exc}")
+                continue
+            corr = pairing_offset_correlations(fc, obs, ALIGNMENT_LEAD_HOURS)
+            problem = alignment_problem(label, corr)
+            status = "ok" if problem is None else "SHIFT"
+            print(
+                f"  [{status:>5}] {label:<62} r[-1,0,+1]="
+                f"{corr[-1]:.3f},{corr[0]:.3f},{corr[1]:.3f}"
+            )
+            if problem is not None:
+                problems.append(problem)
+
     if problems:
         print(f"\n  PREFLIGHT FAIL ({len(problems)} problem(s)) -- do NOT start a long run:")
         for p in problems:
             print(f"    - {p}")
         return 1
-    print("\n  PREFLIGHT PASS: every store is present, two-season, and carries data.")
+    print(
+        "\n  PREFLIGHT PASS: every store is present, two-season, carries data, "
+        "and pairs forecasts with the right IMD day."
+    )
     return 0
 
 
