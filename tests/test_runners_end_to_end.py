@@ -62,6 +62,7 @@ RUNNER_STORE_KINDS: dict[str, tuple[str, ...]] = {
     "run_tail_repair_qm.py": ("baseline", "climatology"),
     "run_tail_repair_qm_emos.py": ("baseline", "lagged", "ifs_ens", "climatology"),
     "run_tail_repair_evt.py": ("baseline", "lagged", "ifs_ens", "climatology"),
+    "run_quantile_avg_reliability.py": ("baseline", "lagged", "ifs_ens", "climatology"),
 }
 
 
@@ -70,6 +71,11 @@ RUNNER_STORE_KINDS: dict[str, tuple[str, ...]] = {
 #: tail above a lower u (tw-CRPS is still scored at 64.5 and 115.6 mm, >= u).
 RUNNER_EXTRA_ARGS: dict[str, list[str]] = {
     "run_tail_repair_evt.py": ["--threshold-u", "10"],
+    # No Tier 2b train CSV exists for the synthetic stores, so name the config.
+    "run_quantile_avg_reliability.py": [
+        "--threshold-u", "10", "--emos-source", "graphcast", "--weight", "0.5",
+        "--n-resamples", "50",
+    ],
 }
 
 
@@ -1128,3 +1134,25 @@ def test_evt_scores_every_arm_and_comparison(stores, tmp_path):
     assert {"h7_lead_improved", "brier_7.5_degraded", "sedi_115.6_improved"} <= set(paired.columns)
     reliability = pd.read_csv(out / "tail_repair_evt_reliability.csv")
     assert {"observed_frequency_ci_lo", "observed_frequency_ci_hi"} <= set(reliability.columns)
+
+
+def test_quantile_avg_reliability_writes_scores_and_a_reliability_table(stores, tmp_path):
+    """#75 follow-up 3: every lead x fold x extreme threshold is scored, and the
+    reliability table has the bins, counts and CI columns step 12's does."""
+    out = tmp_path / "qavg_rel"
+    run_script("run_quantile_avg_reliability.py", stores, out, extra=["--leads", "24"])
+    scores = pd.read_csv(out / "quantile_avg_extreme.csv")
+    assert set(scores["threshold"]) == {115.6, 204.5}
+    assert set(scores["fold"].astype(str)) == {"2018", "2020"}
+    assert (scores["arm"] == "quantile_avg_gpd_tail").all()
+    assert scores["brier"].between(0.0, 1.0).all()
+    assert scores["climatology_brier"].between(0.0, 1.0).all()
+    table = pd.read_csv(out / "quantile_avg_reliability.csv")
+    for column in ("n", "mean_forecast", "observed_frequency",
+                   "observed_frequency_ci_lo", "observed_frequency_ci_hi"):
+        assert column in table.columns, column
+    counts = table.groupby("threshold")["n"].sum()
+    assert (counts > 0).all()
+    # Every observed forecast cell lands in exactly one bin.
+    by_threshold = scores.groupby("threshold")["n_observed_cells"].sum()
+    assert counts.to_dict() == by_threshold.to_dict()
