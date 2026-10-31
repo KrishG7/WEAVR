@@ -251,12 +251,68 @@ reproduces the EMOS map to 1.3e-5 relative error in every cell
 ordered (P(>204.5) ≤ P(>115.6) everywhere) and never fall back, but they are
 1.9 times the EMOS map's on average at 24 h and 1.4 times at 120 h, with a
 median per-cell ratio of 10 and 4.9 (the highest cell is about the same:
-0.021 against 0.023 at 115.6 mm, 24 h). BMA's upper tail is heavier
-than EMOS-CSG's, and at a weight of 0.8 towards BMA that lifts the anchor of
-the splice. The EMOS tail already over-forecasts these extremes about three
-times (`docs/tail-repair-results.md` §4b), and the combined map's reliability
-has not been measured, so it is offered beside the published map rather than
-replacing it.
+0.021 against 0.023 at 115.6 mm, 24 h). BMA's upper tail is heavier than
+EMOS-CSG's, and at a weight of 0.8 towards BMA that lifts the anchor of the
+splice. §5b measures whether that is better or worse calibrated.
+
+### 5b. Reliability of the quantile-averaged extreme probabilities (#75 follow-up)
+
+`scripts/run_quantile_avg_reliability.py` scores the quantile-averaged
+distribution with the pooled GPD tail spliced above u = 64.5 mm exactly as
+step 12 scored the EMOS tail (`docs/tail-repair-results.md`): the same
+leave-one-year-out folds and test cells, the tail fitted on the IMD archive
+minus the test year, the same reliability bins, Brier on cells IMD observes
+(`obs >= t`), climatology without the test year, expected-count SEDI. The EMOS
+source and weight are Tier 2b's for each lead and fold, read from
+`results/tier2b_combined_train.csv`. Outputs: `results/quantile_avg_extreme.csv`,
+`results/quantile_avg_reliability.csv`. The runner was cross-checked first
+with weight 0 (EMOS only) against step 12's `csgd_gpd_tail`: Brier within 0.02%,
+SEDI within 0.001, identical cells, events and climatology.
+
+| threshold | lead | BSS quantile-avg | BSS EMOS tail | SEDI quantile-avg | SEDI EMOS tail | forecast / observed, quantile-avg | forecast / observed, EMOS tail |
+|---|---|---|---|---|---|---|---|
+| 115.6 mm | 24 h | 0.0414 | 0.0423 | 0.298 | 0.311 | 1.16x | 0.98x |
+| 115.6 mm | 48 h | 0.0406 | 0.0410 | 0.296 | 0.307 | 1.13x | 0.97x |
+| 115.6 mm | 72 h | 0.0387 | 0.0386 | 0.290 | 0.301 | 1.13x | 0.97x |
+| 115.6 mm | 96 h | 0.0292 | 0.0302 | 0.265 | 0.277 | 1.13x | 0.95x |
+| 115.6 mm | 120 h | 0.0260 | 0.0256 | 0.255 | 0.263 | 1.15x | 0.94x |
+| 204.5 mm | 24 h | 0.0042 | 0.0062 | 0.222 | 0.241 | 1.42x | 1.18x |
+| 204.5 mm | 48 h | 0.0042 | 0.0058 | 0.221 | 0.238 | 1.38x | 1.17x |
+| 204.5 mm | 72 h | 0.0041 | 0.0051 | 0.219 | 0.232 | 1.37x | 1.16x |
+| 204.5 mm | 96 h | 0.0014 | 0.0033 | 0.193 | 0.215 | 1.37x | 1.13x |
+| 204.5 mm | 120 h | 0.0009 | 0.0024 | 0.186 | 0.204 | 1.39x | 1.12x |
+
+**It is no better than the EMOS tail, and it over-forecasts more.**
+
+- **Brier** is equal to five decimals at every lead and both thresholds, so Brier
+  does not separate the two maps.
+- **Brier skill** is slightly lower at 8 of 10 lead x threshold pairs (higher
+  at 2), and **SEDI is lower at all 10**, by 0.008–0.022.
+- **Calibration in total:** the EMOS tail forecasts 0.94–0.98x the observed
+  frequency at 115.6 mm and 1.12–1.18x at 204.5 mm; the quantile average
+  forecasts 1.13–1.16x and 1.37–1.42x. The "about twice" in the earlier
+  version of this section was the single display day; over every test cell it
+  is 1.14x and 1.39x in total.
+- **Reliability** (pooled over leads and folds, 115.6 mm): both maps
+  over-forecast the low-probability bins and under-forecast the high ones.
+  Above about 2% the observed frequency exceeds the forecast for both (e.g. the
+  0.05-0.1 bin: forecast 0.069, observed 0.106 for the quantile average and
+  0.068 against 0.125 for the EMOS tail). In the low bins the quantile average
+  over-forecasts more: in the 1e-4..1e-3 bin it forecasts 0.00039 against 0.00012
+  observed (3.2x), the EMOS tail 0.00033 against 0.00020 (1.7x); in the
+  1e-3..5e-3 bin 0.0029 against 0.0008 (3.5x) and 0.0025 against 0.0011 (2.4x).
+- **Fallback cells** (neither parent fitted for the cell's bin and region, probability
+  0): 78 observed cells per threshold, 14 of which are 115.6 mm events.
+
+These are point estimates: the runner writes no per-day files, so there is no
+paired block-bootstrap CI on the differences, and the Brier tie, the SEDI gap
+and the Brier-skill gap should be read as consistent in sign, not as tested.
+They do not support promoting this map. The H10 result stands: it is a CRPS
+verdict, and this run only shows that the CRPS gain does not carry over to
+the 115.6 and 204.5 mm exceedance probabilities.
+
+**Decision: the dashboard default stays `emos_csg`.** `--combiner quantile_avg`
+remains available and experimental.
 
 ---
 
@@ -267,10 +323,9 @@ replacing it.
 - **The linear pool's inverse is interpolated**, not closed-form (§2 C). It is
   kept comparison-only for that reason, and a test pins it inside the parents'
   CRPS range so an inversion failure cannot pass as a pooling result.
-- **The quantile-averaged extreme map's reliability is unmeasured** (§5a). Its
-  probabilities run about twice the EMOS map's; whether that is better or worse
-  calibrated above 64.5 mm needs the step 12 reliability table rerun on this
-  combiner.
+- **The quantile-averaged extreme map is measured (§5b) and not better** than the
+  EMOS tail: equal Brier, lower SEDI at every lead, 1.14x / 1.39x over-forecast
+  in total. No paired CI was computed on those differences (§5b).
 
 **Resolved since the first version of this file:**
 
