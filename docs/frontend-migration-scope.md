@@ -53,7 +53,7 @@ Consequences locked in for later steps:
   not harder).
 - **Extreme-probability map** (`extremeProbability.js`, step 6): `<canvas>`,
   two draw passes over the same grid — a continuous-probability pass
-  (manual colour interpolation across `PROBABILITY_COLORSCALE`'s 5 stops)
+  (manual colour interpolation across `PROBABILITY_COLORSCALE`'s 5 stops, at square-root position)
   followed by a second pass drawing semi-transparent grey `fillRect`s only
   where `is_fallback` is true, reproducing the two-`go.Heatmap`-trace
   overlay without a second charting-library layer.

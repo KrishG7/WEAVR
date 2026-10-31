@@ -230,18 +230,29 @@ optional second `overlayColorAt` layer, and `BasemapMap.shared(key)` holds one
 long-lived map per view (creation promise cached, as in step 04). The blended
 map was moved onto `BasemapMap.shared` and behaves as before.
 
-**Continuous colours, per-cell opacity.** Cell colours are interpolated from
-the same `probability_colorscale` as the plain grid. That scale starts at
-white for 0 and reaches its first real colour (light green) only at 0.25, so
-solid fills at low probability would wash the basemap out with white.
-Opacity therefore rises linearly from 0 at p = 0 to 0.85 at p ≥ 0.25. Colours
-are unchanged; only how strongly they cover the basemap.
+**Continuous colours on a square-root scale, per-cell opacity.** Cell colours
+are interpolated from the same `probability_colorscale` as the plain grid, but
+a probability `p` sits at position `sqrt(p)` along its five stops. On the
+linear scale (white at 0, first real colour, light green, at 0.25) every
+extreme-rain probability of a few percent fell into the first sliver and the
+map read as blank: measured in a real browser on the example grids, 0-8 of
+17,415 cells at 115.6 mm and none at 204.5 mm were visibly tinted (channel
+distance from white of at least 20), against 4,345-4,885 and 1,067-2,054 now.
+The scale is fixed, not stretched to each map's maximum, so one probability is
+one colour at every lead and threshold, and the legend labels real
+probabilities (0, 1, 5, 10, 25, 50, 100%) at the positions they occupy. In
+geography mode opacity rises linearly in that scale position from 0 at p = 0 to
+0.85 at the first real colour (p = 6.25%), so solid fills at low probability do
+not wash the basemap out with white. Colours are unchanged; only how strongly
+they cover the basemap.
 
-**The map is pale, and says why.** The example grids' highest probabilities
-are 3.0 % (24 h), 0.08 % (48 h), 0.16 % (72 h), 5.1 % (96 h) and 3.1 %
-(120 h), all far below the 0.25 where colour starts to show. The geography note
-states the highest probability at the current lead, so a pale map is not
-mistaken for missing data.
+**The map is still pale at 204.5 mm, and says why.** The example grids' highest
+probabilities are 3.6 / 3.1 / 2.7 / 1.9 / 2.2 % at 115.6 mm and 0.41 / 0.35 /
+0.31 / 0.22 / 0.25 % at 204.5 mm (24-120 h). The square-root scale makes the
+115.6 mm structure readable; a 0.4% maximum sits 6% of the way along the bar
+whatever the scale, and a stronger transform would exaggerate probabilities
+that small. The note under the map states the highest probability at the
+current lead, so a pale map is not mistaken for missing data.
 
 **Fallback cells stay distinct.** They are a second polygon layer, solid grey
 at 0.75 opacity, drawn above the probability layer, with the legend swatch and

@@ -57,11 +57,25 @@ const EXTREME_PROBABILITY_TAIL_DOT_RGBA = "rgba(20, 20, 20, 0.85)";
 const EXTREME_PROBABILITY_TAIL_DOT_SIZE = 2;
 const EXTREME_PROBABILITY_TAIL_GEOGRAPHY_COLOR = "#141414";
 
+// The colour scale is square-root: a probability p sits at position sqrt(p)
+// along the server's five stops. Extreme-rain probabilities are a few percent
+// at most, and on a linear 0-100% scale every such cell fell inside the first
+// sliver between "dry" and "light" and the map read as blank. The scale is
+// FIXED (not stretched to each map's maximum), so one probability is one
+// colour at every lead and threshold and the maps stay comparable; the legend
+// labels real probabilities at the positions they occupy.
+function extremeProbabilityScalePosition(probability) {
+  return Math.sqrt(Math.min(1, Math.max(0, probability)));
+}
+
+// Probabilities labelled on the legend, placed at their scale position.
+const EXTREME_PROBABILITY_LEGEND_TICKS = [0, 0.01, 0.05, 0.1, 0.25, 0.5, 1];
+
 // Geography mode. The colour scale's first two stops are dry (white) and
-// light (green, at 0.25), so a solid fill at low probability would wash the
-// basemap out with white. Opacity therefore rises linearly from 0 at p = 0
-// to its full value at p = 0.25 (the first non-dry stop); colours are still
-// interpolated from the real scale, unchanged.
+// light (green, at scale position 0.25, i.e. p = 6.25%), so a solid fill at
+// low probability would wash the basemap out with white. Opacity therefore
+// rises linearly in scale position from 0 at p = 0 to its full value at the
+// first non-dry stop; colours are still interpolated from the real scale.
 const EXTREME_PROBABILITY_FULL_OPACITY_AT = 0.25;
 const EXTREME_PROBABILITY_MAX_OPACITY = 0.85;
 const EXTREME_PROBABILITY_GEOGRAPHY_FALLBACK_COLOR = "#787878";
@@ -126,19 +140,26 @@ function formatThreshold(threshold) {
 
 /** Fill opacity for a cell of probability `p` in geography mode. */
 function extremeProbabilityOpacity(p) {
-  const fraction = Math.min(1, Math.max(0, p) / EXTREME_PROBABILITY_FULL_OPACITY_AT);
+  const fraction = Math.min(
+    1,
+    extremeProbabilityScalePosition(p) / EXTREME_PROBABILITY_FULL_OPACITY_AT
+  );
   return fraction * EXTREME_PROBABILITY_MAX_OPACITY;
 }
 
 /**
- * Why the map looks pale, said in the plain grid as well as the geography
- * view: extreme-rain probabilities are a few percent at most, on a colour
- * scale running to 1, so a nearly white map is the data, not a missing layer.
+ * Why the map is still pale, said in the plain grid as well as the geography
+ * view: extreme-rain probabilities are a few percent at most. The colours use
+ * a square-root scale to spread them out (1% is 10% of the way along the bar,
+ * 4% is 20%), but a map whose highest value is a few percent still sits near
+ * the pale end by design -- it is the data, not missing data.
  */
 function extremeProbabilityPaleNote(maxProbability) {
   return (
-    `The highest probability on this map is ${(maxProbability * 100).toFixed(1)}%, ` +
-    "so on a colour scale running to 100% it is pale by design -- it is not " +
+    `The highest probability on this map is ${(maxProbability * 100).toFixed(1)}%. ` +
+    "Colours use a fixed square-root scale (1% is 10% of the way along the bar), " +
+    "so small probabilities show, and the same value has the same colour at " +
+    "every lead and threshold; a mostly pale map is the data -- it is not " +
     "missing data."
   );
 }
@@ -193,14 +214,15 @@ function hexToRgb(hex) {
 }
 
 /**
- * Linearly interpolates `probability` (0..1) against `colorscale`'s real
+ * Linearly interpolates the scale position of `probability` (0..1; square-root,
+ * see extremeProbabilityScalePosition) against `colorscale`'s real
  * [position, hexColor] stops (from /api/colors's probability_colorscale),
  * returning an "rgb(r,g,b)" string. Matches Plotly's own continuous
  * colourscale interpolation between the same stops the Streamlit view
  * uses.
  */
 function interpolateProbabilityColor(colorscale, probability) {
-  const p = Math.min(1, Math.max(0, probability));
+  const p = extremeProbabilityScalePosition(probability);
   for (let i = 0; i < colorscale.length - 1; i++) {
     const [p0, hex0] = colorscale[i];
     const [p1, hex1] = colorscale[i + 1];
@@ -324,14 +346,19 @@ function renderExtremeProbabilityLegend(container, colorscale, grid, counts) {
   bar.style.background = `linear-gradient(to right, ${gradientStops})`;
   wrapper.appendChild(bar);
 
+  // Real probabilities at the positions they occupy on the square-root scale.
   const ticks = document.createElement("div");
-  ticks.style.display = "flex";
-  ticks.style.justifyContent = "space-between";
+  ticks.style.position = "relative";
+  ticks.style.height = "1.1em";
   ticks.style.fontSize = "0.75rem";
   ticks.style.color = "var(--color-text-muted)";
-  ["0.0", "0.25", "0.5", "0.75", "1.0"].forEach((tick) => {
+  EXTREME_PROBABILITY_LEGEND_TICKS.forEach((tick, index, all) => {
     const span = document.createElement("span");
-    span.textContent = tick;
+    span.textContent = `${tick * 100}%`;
+    span.style.position = "absolute";
+    span.style.left = `${extremeProbabilityScalePosition(tick) * 100}%`;
+    span.style.transform =
+      index === 0 ? "none" : index === all.length - 1 ? "translateX(-100%)" : "translateX(-50%)";
     ticks.appendChild(span);
   });
   wrapper.appendChild(ticks);
@@ -367,6 +394,14 @@ function renderExtremeProbabilityLegend(container, colorscale, grid, counts) {
     EXTREME_PROBABILITY_FALLBACK_RGBA +
     '"></span>fallback cell (not fittable at this lead)';
   wrapper.appendChild(fallbackNote);
+
+  const scaleNote = document.createElement("div");
+  scaleNote.style.fontSize = "0.75rem";
+  scaleNote.style.color = "var(--color-text-muted)";
+  scaleNote.style.marginTop = "4px";
+  scaleNote.textContent =
+    "Square-root colour scale: fixed, so comparable across leads and thresholds.";
+  wrapper.appendChild(scaleNote);
 
   container.appendChild(wrapper);
 }
